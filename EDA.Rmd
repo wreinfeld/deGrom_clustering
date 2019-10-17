@@ -1,0 +1,366 @@
+---
+title: "Final Project EDA"
+author: "Walker Reinfeld"
+date: "STAT 301-3"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+source("Data_cleaning.R")
+```
+
+### Overview of Data (citations at end)
+The data for my project are all of Jacob deGrom's pitches that were tracked by MLB's Statcast system from the 2015-2018 seasons. Statcast was only implemented in 2015 hence using that as the cutoff for the data. I accquired the data from BaseballSavant.com that is curated by Daren Willman. A variable was added to indicate whether or not the pitches were thrown in the regular or postseason and what year they came from. Then all of the pitches were stacked on top of each other in date order from earliest pitch to latest pitch. I ended up performing my EDA on the complete dataset instead of splitting it up. This is mainly because my first quarter project was on the compelte dataset and I wanted to be able to reuse some of those visualizations so I could spend most of my time focusing on fitting my clustering models. There is not much missingness in my data and there are currently 12,130 pitches with 92 variables each, but many of these variables can be removed from the data before fitting my models as they are not quantitiative or no longer relevant values. There is some missingness in my data. Of the measurements I deem important the missing values are as follows: there are 8 missing release speeds, 54 pitches missing release positions, and 172 pitches missing effective speed, 585 pitches missing spin rates, and 193 pitches missing a release extension measurement. There is also a lot of missingness in the data in terms of runners on base because the data lists the batterID of the runner in variables `on_1b`, `on_2b`, `on_3b` and lists NA's when there is no one on that base for that pitch. I created indicator variables for a runner on base and then runners in scoring position.
+
+
+## Essential Findings
+
+
+
+### Pitch Mix
+During my first quarter project I presented the following visualization that shows Jacob deGrom's pitch mix over the years in the data.
+```{r}
+## proportions of pitches thrown by season and season type in career
+complete_data %>% 
+  group_by(season_year, season_type) %>% 
+  ## obtaining pitches by year and season type
+  mutate(total_pitches = n()) %>%
+  ungroup() %>% 
+  ## gouping by season_year, season_type and pitch_type
+  group_by(season_year, season_type, pitch_type) %>% 
+  mutate(pitches_per_type = n()) %>%
+  mutate(pitch_prop = pitches_per_type / total_pitches) %>% 
+  select(season_year, season_type, pitch_name, pitch_type, pitch_prop) %>%
+  filter(season_type == "Regular") %>%
+  ## removing NA and Intentional balls
+  filter(!is.na(pitch_name) & !(pitch_type == "IN")) %>% 
+  unique() %>% 
+  ggplot(aes(x = as.numeric(season_year), y = pitch_prop, 
+             color = fct_reorder2(pitch_name, season_year, pitch_prop))) +
+  geom_line() +
+  geom_point() +
+  labs(color = "Pitch Name", x = "Year", title = "Regular Season Pitch Mix",
+       y = "Proportion of Total Pitches") +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+From the plot you can see that Jacob deGrom trusted his 4-seam fastball more than he did in previous years in addition to his slider. 
+
+
+Next I wanted to see how whether or not if the pitch was a strike out or a non-strikeout pitch how that affected deGrom's pitch choice.
+
+```{r, fig.show='hold', out.width="50%" }
+complete_data %>% 
+  filter(str_detect(events, "strikeout")) %>% 
+  group_by(season_year, season_type) %>% 
+  mutate(total_strikeout_pitches = n()) %>% 
+  ungroup() %>% 
+  group_by(season_year, season_type, pitch_type) %>% 
+  mutate(so_by_pitch = n(),
+         strike_out_prop = so_by_pitch / total_strikeout_pitches) %>%
+  ungroup() %>% 
+  select(season_year, season_type, pitch_name, 
+         pitch_type, total_strikeout_pitches, so_by_pitch, strike_out_prop) %>%
+  filter(season_type == "Regular") %>%
+  ## removing NA and Intentional balls
+  filter(!is.na(pitch_name) & !(pitch_type == "IN")) %>% 
+  unique() %>%
+  ggplot(aes(x = as.numeric(season_year), y = strike_out_prop, 
+             color = fct_reorder2(pitch_name, season_year, strike_out_prop))) +
+  geom_line() +
+  geom_point() +
+  labs(color = "Pitch Name", x = "Year", title = "Strike Out Pitch Mix") +
+  theme(plot.title = element_text(hjust = 0.5))
+
+
+complete_data %>% 
+  filter(!(str_detect(events, "strikeout"))) %>% 
+  group_by(season_year, season_type) %>% 
+  mutate(total_nonstrikeout_pitches = n()) %>% 
+  ungroup() %>% 
+  group_by(season_year, season_type, pitch_type) %>% 
+  mutate(pitch_by_type = n(),
+         nonstrikeout_prop = pitch_by_type / total_nonstrikeout_pitches) %>%
+  ungroup() %>% 
+  select(season_year, season_type, pitch_name, 
+         pitch_type, total_nonstrikeout_pitches, pitch_by_type, nonstrikeout_prop) %>%
+  filter(season_type == "Regular") %>%
+  ## removing NA and Intentional balls
+  filter(!is.na(pitch_name) & !(pitch_type == "IN")) %>% 
+  unique() %>%
+  ggplot(aes(x = as.numeric(season_year), y = nonstrikeout_prop, 
+             color = fct_reorder2(pitch_name, season_year, nonstrikeout_prop))) +
+  geom_line() +
+  geom_point() +
+  labs(color = "Pitch Name", x = "Year", title = "Non-Strike Out Pitch Mix") +
+  theme(plot.title = element_text(hjust = 0.5))
+
+```
+
+From the above plots you can see that the increase in deGrom's fastball usage actually most likely came from his increased usage on non-strikeout pitches and deGrom got less strikeouts on his fastball than he did in years past. It also appears deGrom all around used his slider more often. 
+
+### Result of Pitch
+Again in my first quarter project I presented a visualization that showed the proportions of strikes thrown, balls thrown, and balls hit in play. The plot below shows that deGrom threw more strikes last year while throwing less balls and allowing less balls hit in play.
+```{r}
+
+complete_data %>% 
+  group_by(season_year, season_type) %>% 
+  ## obtaining pitches by year and season type
+  mutate(total_pitches = n()) %>%
+  ungroup() %>% 
+  group_by(season_year, season_type, type) %>% 
+  mutate(type_prop = n() / total_pitches) %>% 
+  select(season_year, season_type, pitch_type, pitch_name, type, type_prop) %>% 
+  filter(season_type == "Regular") %>% 
+  ## removing NA and intentional balls
+  filter(!is.na(pitch_name) & !(pitch_type == "IN")) %>% 
+  unique() %>% 
+  ungroup() %>% 
+  mutate(type = case_when(type == "S" ~ "Strike",
+                          type == "B" ~ "Ball",
+                          TRUE ~ "In play") %>% as.factor()) %>% 
+  ggplot(aes(x = as.numeric(season_year), y = type_prop, 
+             color = fct_reorder2(type, season_year, type_prop))) +
+  geom_line() +
+  geom_point() +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  labs(color = "Ball, Strike, In Play", x = "Year", y = "Type Proportion", 
+       Title = "Pitch Result Proportions")
+```
+
+Next I wanted to break this proportions up by pitch, so I changed the denominator to be the amount of times deGrom through that pitch in that season and made the numerator the amount of times that pitch was a strike, ball, or hit in play. The plot below is the result.
+```{r}
+## proportion of strikes balls and balls hit in play 
+complete_data %>% 
+  group_by(season_year, season_type, pitch_name) %>% 
+  ## obtaining pitches by year and season type
+  mutate(total_pitches = n()) %>%
+  ungroup() %>% 
+  group_by(season_year, pitch_name, season_type, type) %>% 
+  mutate(type_prop = n() / total_pitches) %>% 
+  select(season_year, season_type, pitch_type, pitch_name, type, type_prop) %>% 
+  filter(season_type == "Regular") %>% 
+  ## removing NA and intentional balls
+  filter(!is.na(pitch_name) & !(pitch_type == "IN")) %>% 
+  unique() %>%
+  ungroup() %>% 
+  mutate(type = case_when(type == "S" ~ "Strike",
+                          type == "B" ~ "Ball",
+                          TRUE ~ "In play") %>% as.factor()) %>% 
+  ggplot(aes(x = as.numeric(season_year), y = type_prop, 
+             color = fct_reorder2(type, season_year, type_prop))) +
+  geom_line() +
+  geom_point() +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  facet_wrap(~pitch_name) + 
+  labs(color = "Ball, Strike, In Play", x = "Year", y = "Type Proportion", 
+                                 Title = "Pitch Result Proportions")
+
+```
+
+It it pretty interesting to note that although deGrom through his curveball less that 10% of the time in 2018, he was much more effective with it when he did. His strike percentage with the curveball jumped over 10% while the ball percentage and in play percentage dropped significantly as well. It is also quite interesting that although deGrom has increased his usage of his slider over the course of the data set, his "effectiveness" of the pitch has stayed relatively constant over the same time period.
+
+### Speeds on Strikeouts vs non-Strikeouts
+To help with the clustering objective of this project I wanted to see if there were any patterns from some metrics on strike outs vs non-strikeouts so I first did density plots of pitch speed split up by pitch type and by years. The resulting plots are below
+```{r, fig.show='hold', out.width="50%", cache =TRUE}
+pxp_reg_2015 %>% 
+  filter(str_detect(events, "strikeout")) %>% 
+  group_by(season_year) %>%
+  filter(!is.na(pitch_type) & !(pitch_type == "IN") & 
+           !is.na(release_speed) & season_type == "Regular") %>% 
+  ggplot(aes(x = release_speed, fill = pitch_name)) +
+  geom_density(alpha = 0.3) +
+  labs(title = "2015 Strikeout speeds by pitch") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  coord_cartesian(xlim = c(80,100))
+
+pxp_reg_2015 %>% 
+  filter(!(str_detect(events, "strikeout"))) %>% 
+  group_by(season_year) %>%
+  filter(!is.na(pitch_type) & !(pitch_type == "IN") & 
+           !is.na(release_speed) & season_type == "Regular") %>% 
+  ggplot(aes(x = release_speed, fill = pitch_name)) +
+  geom_density(alpha = 0.3) +
+  labs(title = "2015 non-Strikeout speeds by pitch") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  coord_cartesian(xlim = c(80,100))
+
+### 2016
+
+pxp_reg_2016 %>% 
+  filter(str_detect(events, "strikeout")) %>% 
+  group_by(season_year) %>%
+  filter(!is.na(pitch_type) & !(pitch_type == "IN") & 
+           !is.na(release_speed) & season_type == "Regular") %>% 
+  ggplot(aes(x = release_speed, fill = pitch_name)) +
+  geom_density(alpha = 0.3) +
+  labs(title = "2016 Strikeout speeds by pitch") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  coord_cartesian(xlim = c(80,100))
+
+pxp_reg_2016 %>% 
+  filter(!(str_detect(events, "strikeout"))) %>% 
+  group_by(season_year) %>%
+  filter(!is.na(pitch_type) & !(pitch_type == "IN") & 
+           !is.na(release_speed) & season_type == "Regular") %>% 
+  ggplot(aes(x = release_speed, fill = pitch_name)) +
+  geom_density(alpha = 0.3) +
+  labs(title = "2016 non-Strikeout speeds by pitch") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  coord_cartesian(xlim = c(80,100))
+
+
+### 2017
+pxp_reg_2017 %>% 
+  filter(str_detect(events, "strikeout")) %>% 
+  group_by(season_year) %>%
+  filter(!is.na(pitch_type) & !(pitch_type == "IN") & 
+           !is.na(release_speed) & season_type == "Regular") %>% 
+  ggplot(aes(x = release_speed, fill = pitch_name)) +
+  geom_density(alpha = 0.3) +
+  labs(title = "2017 Strikeout speeds by pitch") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  coord_cartesian(xlim = c(80,100))
+
+pxp_reg_2017 %>% 
+  filter(!(str_detect(events, "strikeout"))) %>% 
+  group_by(season_year) %>%
+  filter(!is.na(pitch_type) & !(pitch_type == "IN") & 
+           !is.na(release_speed) & season_type == "Regular") %>% 
+  ggplot(aes(x = release_speed, fill = pitch_name)) +
+  geom_density(alpha = 0.3) +
+  labs(title = "2017 non-Strikeout speeds by pitch") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  coord_cartesian(xlim = c(80,100))
+
+
+
+### 2018 
+
+pxp_reg_2018 %>% 
+  filter(str_detect(events, "strikeout")) %>% 
+  group_by(season_year) %>%
+  filter(!is.na(pitch_type) & !(pitch_type == "IN") & 
+           !is.na(release_speed) & season_type == "Regular") %>% 
+  ggplot(aes(x = release_speed, fill = pitch_name)) +
+  geom_density(alpha = 0.3) +
+  labs(title = "2018 Strikeout speeds by pitch") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  coord_cartesian(xlim = c(80,100))
+
+pxp_reg_2018 %>% 
+  filter(!(str_detect(events, "strikeout"))) %>% 
+  group_by(season_year) %>%
+  filter(!is.na(pitch_type) & !(pitch_type == "IN") & 
+           !is.na(release_speed) & season_type == "Regular") %>% 
+  ggplot(aes(x = release_speed, fill = pitch_name)) +
+  geom_density(alpha = 0.3) +
+  labs(title = "2018 non-Strikeout speeds by pitch") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  coord_cartesian(xlim = c(80,100))
+```
+The interesting trends I noticed in these density plots are the unimodal nature of a majority of the non-strikeout density plots and there is a higher proportion of bimodal density plots in the strikeout pitches which suggets that deGrom may be able to to vary his speeds on his pitches and will pick his spots to do so. This could also just be a result of much smaller sample size of strikeout pitches per year to non-strikeout pitches. However I still think these patterns can be exploited. Another really interesting component is the increased velocity deGrom experienced following the 2016 season. As I noted in my first quarter project, this is most likely due to an offseason surgery deGrom had to move a nerve in his elbow that was causing him some discomfort.
+
+
+### Spin rates on strikeout vs non-strikeout
+Similarly I conducted the same type of analysis on spin rates but decided to use boxplots instead.
+```{r, fig.show='hold', out.width="50%"}
+complete_data %>% 
+  filter(str_detect(events, "strikeout")) %>% 
+  group_by(season_year) %>%
+  filter(!is.na(pitch_type) & !(pitch_type == "IN") & 
+           !is.na(release_spin_rate) & season_type == "Regular") %>% 
+  ggplot(aes(x = season_year, y = release_spin_rate, color = pitch_name)) +
+  geom_boxplot() +
+  facet_wrap(~ pitch_name, nrow = 2) +
+  labs(title = "Strikeout spin rates by pitch") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+   coord_cartesian(ylim = c(500, 3000))
+
+
+complete_data %>% 
+  filter(!(str_detect(events, "strikeout"))) %>% 
+  group_by(season_year) %>%
+  filter(!is.na(pitch_type) & !(pitch_type == "IN") & 
+           !is.na(release_spin_rate) & season_type == "Regular") %>% 
+  ggplot(aes(x = season_year, y = release_spin_rate, color = pitch_name)) +
+  geom_boxplot() +
+  facet_wrap(~ pitch_name, nrow = 2) +
+  labs(title = "non-Strikeout spin rates by pitch") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  coord_cartesian(ylim = c(500, 3000))
+```
+It is interesting to note that spin rates of pitches that benefit from higher spin rates have improved spin rates when they are the strikeout pitch and the changeup which benefits from lower spin rate has a lower distribution when it is a strikeout pitch.
+
+
+### Spin Rate vs Release Speed
+Many people in baseball I think would agree that spin rate and release speed of a pitch are two of the most important physical components of a pitch so I just wanted to see their relationship on a scatter plot over the seasons in the dataset.
+```{r}
+complete_data %>% 
+  filter(!is.na(pitch_type) & !(pitch_type == "IN") & 
+           !is.na(release_speed) & season_type == "Regular" &
+           !is.na(release_spin_rate)) %>% 
+  ggplot(aes(x = release_speed, y = release_spin_rate, color = pitch_name)) +
+  geom_point(alpha = 0.3) + 
+  facet_wrap(~season_year)
+```
+
+The most interesting thing about this plot is the tightness of the clusters increases after each year. It appears that deGrom has just overall been a much more consistent pitcher. 
+
+
+
+## Secondary Findings 
+
+
+### Release Point
+I am putting my most important finding from the first quarter project in the secondary findings for this project because I am unsure of its applicablity to this project. But my favorite visualization is shown below.
+```{r}
+complete_data %>% 
+  filter(!is.na(pitch_type) & !(pitch_type == "IN") & 
+           !(is.na(release_pos_x)) & !(is.na(release_pos_z))) %>% 
+  filter(season_type == "Regular") %>% 
+  ggplot(aes(x = release_pos_x, y = release_pos_z, color = pitch_name)) +
+  geom_point(alpha = .2) +
+  facet_wrap(~ season_year, nrow = 1) +
+  labs(title = "Release Points: 2015-2018") +
+  theme(plot.title = element_text(hjust = 0.5)) + 
+  coord_cartesian(xlim = c(-2.5, -0.5), ylim = c(4.8, 6.4))
+
+```
+
+Like the spin rate vs speed visualization showed Jacob deGrom has become a much more consistent pitcher with his mechanics over the years and this is shown by the cluster of release points in 2018 being so tightly packed.
+
+
+I look forward to finding more patterns in the data with my clustering models.
+
+
+## Data citations
+
+**deGrom 2015 Regular Season pitch-by-pitch data**
+
+**Citation** : Daren Willman (2018): Jacob deGrom 2015 Pitch-by-Pitch Regular Season. Baseball Savant. [https://atmlb.com/2G8hets](https://atmlb.com/2G8hets)
+
+**deGrom 2015 Playoff pitch-by-pitch data**
+
+**Citation** : Daren Willman (2018): Jacob deGrom 2015 Pitch-by-Pitch Playoffs. Baseball Savant. [https://atmlb.com/2SFYOBL](https://atmlb.com/2SFYOBL)
+
+**deGrom 2016 pitch-by-pitch data**
+
+**Citation** : Daren Willman (2018): Jacob deGrom 2016 Pitch-by-Pitch. Baseball Savant. [https://atmlb.com/2EbLscc](https://atmlb.com/2EbLscc)
+
+
+**deGrom 2017 pitch-by-pitch data**
+
+**Citation** : Daren Willman (2018): Jacob deGrom 2017 Pitch-by-Pitch. Baseball Savant. [https://atmlb.com/2zTcWAv](https://atmlb.com/2zTcWAv)
+
+**deGrom 2018 pitch-by-pitch data**
+
+**Citation** : Daren Willman (2018): Jacob deGrom 2018 Pitch-by-Pitch. Baseball Savant.  [https://atmlb.com/2PrflY8](https://atmlb.com/2PrflY8)
+
+
+**Baseball Savant Codebook**
+
+**Citation** : Daren Willman (2018): Statcast Search CSV Documentation. Baseball Savant.
+[https://baseballsavant.mlb.com/csv-docs](https://baseballsavant.mlb.com/csv-docs)
+

@@ -1,0 +1,47 @@
+---
+title: "Final Project Data Memo"
+author: "Walker Reinfeld"
+date: "STAT301-3: Data Science"
+output: html_document
+---
+
+
+### Data Sources
+
+**deGrom 2015 Regular Season pitch-by-pitch data**
+
+**Citation** : Daren Willman (2018): Jacob deGrom 2015 Pitch-by-Pitch Regular Season. Baseball Savant. [https://atmlb.com/2G8hets](https://atmlb.com/2G8hets)
+
+**deGrom 2015 Playoff pitch-by-pitch data**
+
+**Citation** : Daren Willman (2018): Jacob deGrom 2015 Pitch-by-Pitch Playoffs. Baseball Savant. [https://atmlb.com/2SFYOBL](https://atmlb.com/2SFYOBL)
+
+**deGrom 2016 pitch-by-pitch data**
+
+**Citation** : Daren Willman (2018): Jacob deGrom 2016 Pitch-by-Pitch. Baseball Savant. [https://atmlb.com/2EbLscc](https://atmlb.com/2EbLscc)
+
+
+**deGrom 2017 pitch-by-pitch data**
+
+**Citation** : Daren Willman (2018): Jacob deGrom 2017 Pitch-by-Pitch. Baseball Savant. [https://atmlb.com/2zTcWAv](https://atmlb.com/2zTcWAv)
+
+**deGrom 2018 pitch-by-pitch data**
+
+**Citation** : Daren Willman (2018): Jacob deGrom 2018 Pitch-by-Pitch. Baseball Savant.  [https://atmlb.com/2PrflY8](https://atmlb.com/2PrflY8)
+
+
+**Baseball Savant Codebook**
+
+**Citation** : Daren Willman (2018): Statcast Search CSV Documentation. Baseball Savant.
+[https://baseballsavant.mlb.com/csv-docs](https://baseballsavant.mlb.com/csv-docs)
+
+
+I have already performed an EDA and cleaned this data as a part of my first quarter project from 301-1. A majority of my work will be in understanding how Hierarchical Bayesian models works and adapting Blake McShane's work on hitting.
+
+
+### Why this data?
+I believe it could be a good idea to explore more about Jacob deGrom and expand on my project from the first quarter. I would like to try and have unsupervised techniques under my belt so I can be a qualified appliciant for Sports Analytics jobs after graduation. So, I will be attempting to create a Bayesian unsupervised hierarchical model on Jacob deGrom's pitches since Statcast started in 2015. So there is no real classification or regression problem.
+
+
+### Potential Data Issues
+There are not a lot of issues with this data as the baseballsavant data is quite tidy and I have worked with it before. I already know what steps I need to do in order to clean the data. There could be some decisions made about what variables to keep and which ones to discard. The major issue is that my models are kind of "risky" in the fact that I may mot be able to find anything of note with quite a difficult task ahead of me. However, I am more than up for the challenge and excited to see where it takes me.

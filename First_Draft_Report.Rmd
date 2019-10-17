@@ -1,0 +1,786 @@
+---
+title: "Kmeans Clustering of Jacob deGrom Pitches"
+author: "Walker Reinfeld"
+date: "6/2/2019"
+output: 
+  pdf_document:
+  toc: TRUE
+  toc_depth: 3
+  
+---
+
+```{r, include=FALSE, message=FALSE, warning=FALSE}
+library(mltools)
+library(data.table)
+library(knitr)
+library(gridExtra)
+library(ggdendro)
+
+source("Data_cleaning.R")
+
+get_cluster <- function(x, clust_obj){
+  
+  if(class(clust_obj) == "kmeans"){
+    clust = clust_obj$cluster
+  } else {
+    clust = clust_obj
+  }
+  
+  out = x %>% 
+    mutate(cluster = clust)
+  
+  return(out)
+}
+
+# Plot data with cluster labels
+plot_cluster <- function(cluster_dat, title){
+  
+  plt = ggplot(cluster_dat) + 
+    geom_point(aes(release_spin_rate, release_speed, color = factor(cluster)),
+               alpha = 0.3) + 
+    coord_cartesian(xlim = c(-6,4))
+  
+  return(plt)
+}
+
+# Add labels to plots
+label_plot <- function(plot, title){
+  
+  return(plot + labs(title = title))
+}
+# Extract within-cluster SS from K-means object
+get_within_ss <- function(kmean_obj){
+  return(kmean_obj$tot.withinss)
+}
+
+run_hclust <- function(x, meth){
+  return(hclust(dist(x), method = meth))
+}
+
+cut_hclust <- function(hclust_obj, ncuts){
+  return(cutree(hclust_obj, ncuts))
+}
+```
+
+
+## Executive Summary
+As an extension of my 301-1 EDA on Jacob deGrom I was looking for more information about deGrom as a pitcher and maybe why he was more successful in 2018 than he was in 2017. Doing some EDA indicated that there could be some differences between deGrom's pitching with balls in-play vs not in play, strikeouts vs not-strikeouts, and in between years. Kmeans clustering confirmed domain knowledge that deGrom has 5 different pitches, especially that he has two different types of fastballs. Performing Kmeans  clustering on the situations listed above yielded results that confirmed mechanical differences from 2017 to 2018. But the clustering did not yield too many results in terms of situational differences.
+
+
+## Introduction
+As a lifelong baseball fan I was interested in what made Jacob deGroms 2018 season so much better than his previous ones. During 301-1, I investigated pitch-by-pitch data to try and pinpoint what went right for him. I came to some conclusions regarding his release point becoming more consistent and some of his pitches having a higher spin rate than in previous years. But this analysis I conducted in the fall also raised more questions about deGrom's ability to decieve hitters. Of course with a more conisistent release point it will be harder for hitters to tell what pitch is coming, but I wanted to use clustering techniques to see how similar he was decieving hitters. Kmeans clustering was used in this project to find a number of interesting findings regarding Jacob deGrom and his pitching. The clustering was done for many different scenario's to compare: All pitches in the 2018 season vs the 2017 season, Balls hit in play vs balls not in play, and strikeout pitches vs non-strikeout pitches.
+
+
+
+## EDA Findings
+
+During the EDA for this project there were some helpful findings that helped shaped the idea for this project. The first of which was how deGrom's Spin Rates and speeds progressed over time.
+
+### Spin Rate vs Speed
+```{r, echo=FALSE}
+complete_data %>% 
+  filter(!is.na(pitch_type) & !(pitch_type == "IN") & 
+           !is.na(release_speed) & season_type == "Regular" &
+           !is.na(release_spin_rate)) %>% 
+  ggplot(aes(x = release_speed, y = release_spin_rate, color = pitch_name)) +
+  geom_point(alpha = 0.3) + 
+  facet_wrap(~season_year)
+```
+
+This graphic could be a little hard to interpret, but the imortant thing to note is that in 2017 and 2018 you can see the clusters move right along the x-axis compared to the 2015 and 2016 seasons, which means deGrom's velocity increased over those years. Another important thing to note is that in the 2015 plot you can see a lot of points with decreased spin rates. I beleive this was due to the fact that it was the first year StatCast was being used and they had a lot of trouble reading curveballs as shown below. 
+
+### Curveball Spin Rates
+```{r, echo= FALSE}
+## curveball
+complete_data %>% 
+  group_by(season_year) %>% 
+  filter(pitch_type == "CU" & !is.na(release_spin_rate)) %>% 
+  ggplot(aes(x = season_year, y = release_spin_rate, color = season_type)) +
+  geom_boxplot(varwidth = TRUE) +
+  labs(title = "Curveball Spin Rates by Year") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  coord_cartesian(ylim = c(500,3500))
+
+```
+
+The length of the boxplots in 2015 indicate that there was a lot of variability in the recorded spin rates. This will have an effect on clusters that use 2015 data that will be highlighted later.
+
+
+### Balls in-play vs Not in-play
+Another interesting finding from the EDA was how deGrom's different pitches were hit in play or thrown for balls and strikes over the years. The graph below highlights these findings.
+
+```{r, echo=FALSE}
+## proportion of strikes balls and balls hit in play 
+complete_data %>% 
+  group_by(season_year, season_type, pitch_name) %>% 
+  ## obtaining pitches by year and season type
+  mutate(total_pitches = n()) %>%
+  ungroup() %>% 
+  group_by(season_year, pitch_name, season_type, type) %>% 
+  mutate(type_prop = n() / total_pitches) %>% 
+  select(season_year, season_type, pitch_type, pitch_name, type, type_prop) %>% 
+  filter(season_type == "Regular") %>% 
+  ## removing NA and intentional balls
+  filter(!is.na(pitch_name) & !(pitch_type == "IN")) %>% 
+  unique() %>%
+  ungroup() %>% 
+  mutate(type = case_when(type == "S" ~ "Strike",
+                          type == "B" ~ "Ball",
+                          TRUE ~ "In play") %>% as.factor()) %>% 
+  ggplot(aes(x = as.numeric(season_year), y = type_prop, 
+             color = fct_reorder2(type, season_year, type_prop))) +
+  geom_line() +
+  geom_point() +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  facet_wrap(~pitch_name) + 
+  labs(color = "Ball, Strike, In Play", x = "Year", y = "Type Proportion", 
+                                 Title = "Pitch Result Proportions")
+
+```
+
+The most drastic finding in this graph is deGrom's increased ability to throw strikes with his curveball. He threw it less than 10% of the time but was much more effective when he did throw it. This graph shows there may be some validity in clustering on balls that were hit-in play vs not in play. 
+
+### Strikeout speed vs non-strikeout Speed
+Another thing I looked at in the EDA was the speed of his pitches on strikeouts vs non-strikeout pitches. 
+
+```{r, fig.show='hold', out.width="50%", cache =TRUE, echo =FALSE}
+pxp_reg_2015 %>% 
+  filter(str_detect(events, "strikeout")) %>% 
+  group_by(season_year) %>%
+  filter(!is.na(pitch_type) & !(pitch_type == "IN") & 
+           !is.na(release_speed) & season_type == "Regular") %>% 
+  ggplot(aes(x = release_speed, fill = pitch_name)) +
+  geom_density(alpha = 0.3) +
+  labs(title = "2015 Strikeout speeds by pitch") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  coord_cartesian(xlim = c(80,100))
+
+pxp_reg_2015 %>% 
+  filter(!(str_detect(events, "strikeout"))) %>% 
+  group_by(season_year) %>%
+  filter(!is.na(pitch_type) & !(pitch_type == "IN") & 
+           !is.na(release_speed) & season_type == "Regular") %>% 
+  ggplot(aes(x = release_speed, fill = pitch_name)) +
+  geom_density(alpha = 0.3) +
+  labs(title = "2015 non-Strikeout speeds by pitch") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  coord_cartesian(xlim = c(80,100))
+
+### 2016
+
+pxp_reg_2016 %>% 
+  filter(str_detect(events, "strikeout")) %>% 
+  group_by(season_year) %>%
+  filter(!is.na(pitch_type) & !(pitch_type == "IN") & 
+           !is.na(release_speed) & season_type == "Regular") %>% 
+  ggplot(aes(x = release_speed, fill = pitch_name)) +
+  geom_density(alpha = 0.3) +
+  labs(title = "2016 Strikeout speeds by pitch") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  coord_cartesian(xlim = c(80,100))
+
+pxp_reg_2016 %>% 
+  filter(!(str_detect(events, "strikeout"))) %>% 
+  group_by(season_year) %>%
+  filter(!is.na(pitch_type) & !(pitch_type == "IN") & 
+           !is.na(release_speed) & season_type == "Regular") %>% 
+  ggplot(aes(x = release_speed, fill = pitch_name)) +
+  geom_density(alpha = 0.3) +
+  labs(title = "2016 non-Strikeout speeds by pitch") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  coord_cartesian(xlim = c(80,100))
+
+
+### 2017
+pxp_reg_2017 %>% 
+  filter(str_detect(events, "strikeout")) %>% 
+  group_by(season_year) %>%
+  filter(!is.na(pitch_type) & !(pitch_type == "IN") & 
+           !is.na(release_speed) & season_type == "Regular") %>% 
+  ggplot(aes(x = release_speed, fill = pitch_name)) +
+  geom_density(alpha = 0.3) +
+  labs(title = "2017 Strikeout speeds by pitch") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  coord_cartesian(xlim = c(80,100))
+
+pxp_reg_2017 %>% 
+  filter(!(str_detect(events, "strikeout"))) %>% 
+  group_by(season_year) %>%
+  filter(!is.na(pitch_type) & !(pitch_type == "IN") & 
+           !is.na(release_speed) & season_type == "Regular") %>% 
+  ggplot(aes(x = release_speed, fill = pitch_name)) +
+  geom_density(alpha = 0.3) +
+  labs(title = "2017 non-Strikeout speeds by pitch") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  coord_cartesian(xlim = c(80,100))
+
+
+
+### 2018 
+
+pxp_reg_2018 %>% 
+  filter(str_detect(events, "strikeout")) %>% 
+  group_by(season_year) %>%
+  filter(!is.na(pitch_type) & !(pitch_type == "IN") & 
+           !is.na(release_speed) & season_type == "Regular") %>% 
+  ggplot(aes(x = release_speed, fill = pitch_name)) +
+  geom_density(alpha = 0.3) +
+  labs(title = "2018 Strikeout speeds by pitch") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  coord_cartesian(xlim = c(80,100))
+
+pxp_reg_2018 %>% 
+  filter(!(str_detect(events, "strikeout"))) %>% 
+  group_by(season_year) %>%
+  filter(!is.na(pitch_type) & !(pitch_type == "IN") & 
+           !is.na(release_speed) & season_type == "Regular") %>% 
+  ggplot(aes(x = release_speed, fill = pitch_name)) +
+  geom_density(alpha = 0.3) +
+  labs(title = "2018 non-Strikeout speeds by pitch") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  coord_cartesian(xlim = c(80,100))
+
+```
+
+The interesting things to note about these graphs is that it appears deGrom is able to vary his pitch speeds for strikeouts as seen by the multimodal nature of some of the density plots. Compare this to his non-strikeout pitches and the density plots seem to mostly be unimodal. 
+
+
+## Clustering
+
+### Full data
+
+```{r, echo = FALSE, fig.width= 10, fig.height=10, cache=TRUE}
+model_dat_full <- complete_data %>% 
+  filter(pitch_type != "IN" & !(is.na(pitch_type))) %>% 
+  filter(balls != 4) %>%
+  filter(season_type == "Regular") %>% 
+  select(release_speed, 
+         release_extension, release_pos_x,release_pos_z,
+         release_spin_rate, type, description, stand, balls, strikes,
+         game_year, inning, effective_speed,
+         pitch_name, runner_on, scoring_position, events) %>% 
+  mutate(game_year = as.factor(game_year),
+         inning = as.factor(inning),
+         runner_on = as.factor(runner_on),
+         scoring_position = as.factor(scoring_position),
+         balls = as.factor(balls),
+         strikes = as.factor(strikes),
+         type = as.factor(type),
+         stand = as.factor(stand)) %>% 
+  mutate(events = ifelse(is.na(events), "nothing", events)) %>% 
+  drop_na()
+
+model_scaled_full <- model_dat_full %>% select(-pitch_name, -type, -description, -stand,
+                     -game_year, -balls, -strikes, -inning, -runner_on, -scoring_position, -events) %>% 
+  scale() %>% as_tibble() %>% 
+  bind_cols(model_dat_full %>% 
+              select(type, stand,
+                     game_year, balls, strikes, inning, runner_on, scoring_position)) %>% 
+  as.data.table() %>% 
+  mltools::one_hot() %>% as_tibble() %>% bind_cols(model_dat_full %>% 
+                                                     select(description, pitch_name, events))
+
+set.seed(11)
+dat_kmeans_full <-  tibble(xmat = list(model_scaled_full %>% select(-description, -pitch_name, -events))) %>%
+  crossing(nclust = 3:10)
+
+dat_kmeans_full <-  dat_kmeans_full %>% 
+  mutate(kmean = map2(xmat, nclust, kmeans, nstart=20, iter.max = 20), # Fit K-means
+         within_ss = map(kmean, get_within_ss), # Get within-cluster SS
+         clusters = map2(xmat, kmean, get_cluster), # Get DFs with cluster affiliation
+         plots = map(clusters, plot_cluster)) # Plot clusters
+
+
+grid.arrange(grobs = dat_kmeans_full$plots)
+```
+
+The most intersting thing to note about this clustering on the full data is that the kmeans method with 5 clusters is able to pick up on the fact that deGrom's four-seam and two-seam fastballs are different pitches. This is highlighted by the fact that there are two different colors in the top right portion of the graph. This is argument enough for using 5 cluster's throughout the remained of this project, as domain knowledge suggests he has 5 pitches and this is backed up by the kmeans clusters.
+
+<br>
+
+
+#### Looking at the attributes of the 5 clusters from full data.
+
+```{r, echo=FALSE}
+kmeans_dat_full5 <- dat_kmeans_full %>% 
+  pluck("clusters", 3) %>% unnest() %>% select(cluster) %>% 
+  bind_cols(model_dat_full)
+
+kmeans_dat_full5 %>% 
+  group_by(cluster) %>% 
+  summarise(mean_spin = mean(release_spin_rate),
+            mean_release_speed = mean(release_speed),
+            mean_effective_speed = mean(effective_speed),
+            mean_release_extension = mean(release_extension))
+
+
+centers_full <- dat_kmeans_full %>% 
+  pluck("kmean", 3) %>% pluck("centers")
+
+```
+
+We see that the pitches are split up into pretty distinct categories. You have your fastballs with the middle spin rates and highest speeds, the slider with middle speed and higher spin rates, changeup with lowest spin and middle spin, and curveball with highest spin rate and lowest speed. You also may notice that using the data included in 2015 has most likely included any pitch with the really low spin rate in the changeup group as indicated by the slower and faster pitches colored blue. 
+
+As we noted the clustering technique was able to pick up on the differences between the two-seam and four-seam fastball. It obviously appears that those differences are not coming from the spin rates or release speeds. So I plucked the centroids and did a subtraction to see what variables were the basis for the difference.
+
+```{r,echo =FALSE}
+### looking at differences between 4-seam and 2-seam
+fourseam_full <- centers_full[5,]
+twoseam_full <- centers_full[2,]
+slider_full <- centers_full[1,]
+changeup_full <- centers_full[4,]
+curveball_full <- centers_full[3,]
+
+
+
+## difference between 4_seam and 2_seam -- release positions
+abs(fourseam_full - twoseam_full)
+```
+
+So the variables were scaled, so a tenth of a difference is a pretty big effect, but you can see that the biggest difference in coming from release positions and his release extension. There is also some difference in his spin rates and in future clusters for this project we classified the cluster with the higher of the two spin rates to always be the fourseam fastball for consistency. 
+
+<br><br>
+
+
+### Clustering 2017 and 2018 Pitches
+
+
+```{r, echo = FALSE, fig.show='hold', out.width="50%"}
+model_dat2018 <- model_dat_full %>% 
+  filter(game_year == 2018) 
+
+
+model_scaled2018 <- model_dat2018 %>% 
+  select(-pitch_name, -type, -description, 
+         -stand,-game_year, -balls, -strikes, -inning, -runner_on, -scoring_position,
+         -events) %>% 
+  scale() %>% as_tibble() %>% 
+  bind_cols(model_dat2018 %>% 
+              select(type, stand,
+                     balls, strikes, inning, runner_on, scoring_position)) %>% 
+  as.data.table() %>% 
+  mltools::one_hot() %>% as_tibble() %>% bind_cols(model_dat2018 %>% select(description, pitch_name,
+                                                                            events))
+
+
+dat_kmeans2018 <-  tibble(xmat = list(model_scaled2018 %>% select(-description, -pitch_name,
+                                                                  -events))) %>%
+  crossing(nclust = 5)
+
+dat_kmeans2018 <-  dat_kmeans2018 %>% 
+  mutate(kmean = map2(xmat, nclust, kmeans, nstart=20), # Fit K-means
+         within_ss = map(kmean, get_within_ss), # Get within-cluster SS
+         clusters = map2(xmat, kmean, get_cluster), # Get DFs with cluster affiliation
+         plots = map(clusters, plot_cluster)) # Plot clusters
+
+
+grid.arrange(grobs = dat_kmeans2018$plots)
+
+
+
+
+centers_2018 <- dat_kmeans2018 %>% 
+  pluck("kmean", 1) %>% pluck("centers")
+  
+
+fourseam_2018 <- centers_2018[1,]
+twoseam_2018 <- centers_2018[3,]
+slider_2018 <- centers_2018[4,]
+curveball_2018 <- centers_2018[2,]
+changeup_2018 <- centers_2018[5,]
+
+model_dat2017 <- model_dat_full %>% 
+  filter(game_year == 2017) 
+
+
+model_scaled2017 <- model_dat2017 %>% 
+  select(-pitch_name, -type, -description, 
+         -stand,-game_year, -balls, -strikes, -inning, -runner_on, -scoring_position, -events) %>% 
+  scale() %>% as_tibble() %>% 
+  bind_cols(model_dat2017 %>% 
+              select(type, stand,
+                     balls, strikes, inning, runner_on, scoring_position)) %>% 
+  as.data.table() %>% 
+  mltools::one_hot() %>% as_tibble() %>% bind_cols(model_dat2017 %>% select(description, pitch_name,
+                                                                            events))
+
+
+dat_kmeans2017 <-  tibble(xmat = list(model_scaled2017 %>% select(-description, -pitch_name,
+                                                                  -events))) %>%
+  crossing(nclust = 5)
+
+dat_kmeans2017 <-  dat_kmeans2017 %>% 
+  mutate(kmean = map2(xmat, nclust, kmeans, nstart=20), # Fit K-means
+         within_ss = map(kmean, get_within_ss), # Get within-cluster SS
+         clusters = map2(xmat, kmean, get_cluster), # Get DFs with cluster affiliation
+         plots = map(clusters, plot_cluster)) # Plot clusters
+
+
+grid.arrange(grobs = dat_kmeans2017$plots)
+
+kmeans_dat2018_5 <- dat_kmeans2018 %>% 
+  pluck("clusters", 1) %>% unnest() %>% select(cluster) %>% 
+  bind_cols(model_dat2018)
+
+kmeans_dat2018_5 %>% 
+  group_by(cluster) %>% 
+  summarise(mean_spin = mean(release_spin_rate),
+            mean_release_speed = mean(release_speed),
+            mean_effective_speed = mean(effective_speed),
+            mean_release_extension = mean(release_extension))
+
+
+kmeans_dat2017_5 <- dat_kmeans2017 %>% 
+  pluck("clusters", 1) %>% unnest() %>% select(cluster) %>% 
+  bind_cols(model_dat2017)
+
+kmeans_dat2017_5 %>% 
+  group_by(cluster) %>% 
+  summarise(mean_spin = mean(release_spin_rate),
+            mean_release_speed = mean(release_speed),
+            mean_effective_speed = mean(effective_speed),
+            mean_release_extension = mean(release_extension))
+
+
+
+
+centers_2017 <- dat_kmeans2017 %>% 
+  pluck("kmean", 1) %>% pluck("centers")
+
+
+fourseam_2017 <- centers_2017[3,]
+twoseam_2017 <- centers_2017[5,]
+curveball_2017 <- centers_2017[4,]
+slider_2017 <- centers_2017[2,]
+changeup_2017 <- centers_2018[1,]
+
+
+```
+
+The graphs of the clusters alone show something quite interesting about deGrom's pitching in 2018 vs 2017. The 2018 clusters on the left and you see the slider and fastball clusters overlapping a lot more with each other than the 2017 versions. This shows that Degrom was able to blend his pitches more in 2018 which made him more successful. 
+
+Next I wanted to look closer at differences in those specifics pitches.
+
+#### Fourseam year difference
+```{r, echo=FALSE}
+(fourseam_year_diff <- abs(fourseam_2018 - fourseam_2017))
+```
+
+The biggest difference on his 4-seam fastball was his release position in the x direction. 
+
+
+#### Two seam year difference
+```{r, echo = FALSE}
+(twoseam_year_diff <- abs(twoseam_2018 - twoseam_2017))
+```
+
+Similar to the 4-seam fastball, deGrom altered his release position in the x-direction as well. 
+
+
+#### Changeup year difference
+```{r, echo = FALSE}
+(changeup_year_diff <- abs(changeup_2018 - changeup_2017))
+```
+
+For his changeup degrom altered his speed and spin rate the most between the two seasons. From the EDA plot we can conclude that he was throwing his changeup faster with a slower spin rate. 
+
+#### Slider year difference
+```{r, echo = FALSE}
+(slider_year_diff <- abs(slider_2018 - slider_2017))
+```
+
+DeGrom's slider was pretty similar between the two seasons with some variation in his vertical release position. 
+
+#### Curveball year difference
+```{r, echo = FALSE}
+(curveball_year_diff <- abs(curveball_2018 - curveball_2017))
+```
+
+Lastly, similar to his slider deGrom did not have much difference in his curveball besides maybe his vertical release position and release extension.
+
+
+#### 2016 Clusters
+
+In 2016, deGrom's clusters overlapped more often so it was hard to classify pitches in order to truly compare them to other year's measurements. So I present the clusters below, but do not perform further analysis.
+
+```{r, echo =FALSE}
+model_dat2016 <- model_dat_full %>% 
+  filter(game_year == 2016) 
+
+
+model_scaled2016 <- model_dat2016 %>% 
+  select(-pitch_name, -type, -description, 
+         -stand,-game_year, -balls, -strikes, -inning, -runner_on, -scoring_position, -events) %>% 
+  scale() %>% as_tibble() %>% 
+  bind_cols(model_dat2016 %>% 
+              select(type, stand,
+                     balls, strikes, inning, runner_on, scoring_position)) %>% 
+  as.data.table() %>% 
+  mltools::one_hot() %>% as_tibble() %>% bind_cols(model_dat2016 %>% 
+                                                     select(description, pitch_name, events))
+
+
+dat_kmeans2016 <-  tibble(xmat = list(model_scaled2016 %>% 
+                                        select(-description, -pitch_name, -events))) %>%
+  crossing(nclust = 5)
+
+
+
+
+dat_kmeans2016 <-  dat_kmeans2016 %>% 
+  mutate(kmean = map2(xmat, nclust, kmeans, nstart=20), # Fit K-means
+         within_ss = map(kmean, get_within_ss), # Get within-cluster SS
+         clusters = map2(xmat, kmean, get_cluster), # Get DFs with cluster affiliation
+         plots = map(clusters, plot_cluster)) # Plot clusters
+
+
+grid.arrange(grobs = dat_kmeans2016$plots)
+
+kmeans_dat2016_5 <- dat_kmeans2016 %>% 
+  pluck("clusters", 1) %>% unnest() %>% select(cluster) %>% 
+  bind_cols(model_dat2016)
+
+kmeans_dat2016_5 %>% 
+  group_by(cluster) %>% 
+  summarise(mean_spin = mean(release_spin_rate),
+            mean_release_speed = mean(release_speed),
+            mean_effective_speed = mean(effective_speed),
+            mean_release_extension = mean(release_extension))
+```
+
+
+
+
+
+### Balls in play vs Not in Play
+
+
+```{r, echo = FALSE, fig.show='hold', out.width="50%"}
+model_dat_in_play <- model_dat_full %>% 
+   filter(type == "X") 
+ 
+ 
+model_scaled_in_play <- model_dat_in_play %>% 
+ select(-pitch_name, -type, -description, 
+        -stand,-game_year, -balls, -strikes, -inning, -runner_on, -scoring_position,
+        -events) %>% 
+ scale() %>% as_tibble() %>% 
+ bind_cols(model_dat_in_play %>% 
+             select(stand,
+                    game_year, balls, strikes, inning, runner_on, scoring_position)) %>% 
+ as.data.table() %>% 
+ mltools::one_hot() %>% as_tibble() %>% bind_cols(model_dat_in_play %>% select(description, 
+                                                                               pitch_name,
+                                                                               events))
+
+
+dat_kmeans_in_play <-  tibble(xmat = list(model_scaled_in_play %>% select(-description, -pitch_name,
+                                                                         -events))) %>%
+ crossing(nclust = 5)
+
+dat_kmeans_in_play <-  dat_kmeans_in_play %>% 
+ mutate(kmean = map2(xmat, nclust, kmeans, nstart=20), # Fit K-means
+        within_ss = map(kmean, get_within_ss), # Get within-cluster SS
+        clusters = map2(xmat, kmean, get_cluster), # Get DFs with cluster affiliation
+        plots = map(clusters, plot_cluster)) # Plot clusters
+
+
+grid.arrange(grobs = dat_kmeans_in_play$plots)
+
+kmeans_dat_in_play5 <- dat_kmeans_in_play %>% 
+ pluck("clusters", 1) %>% unnest() %>% select(cluster) %>% 
+ bind_cols(model_dat_in_play)
+
+kmeans_dat_in_play5 %>% 
+ group_by(cluster) %>% 
+ summarise(mean_spin = mean(release_spin_rate),
+           mean_release_speed = mean(release_speed),
+           mean_effective_speed = mean(effective_speed),
+           mean_release_extension = mean(release_extension))
+
+
+
+centers_in_play <- dat_kmeans_in_play %>% 
+ pluck("kmean", 1) %>% pluck("centers")
+
+fourseam_in_play <- centers_in_play[2,]
+twoseam_in_play <- centers_in_play[3,]
+changeup_in_play <- centers_in_play[1,]
+curveball_in_play <- centers_in_play[4,]
+slider_in_play <- centers_in_play[5,]
+
+model_dat_not_in_play <- model_dat_full %>% 
+   filter(type != "X") 
+ 
+ 
+ model_scaled_not_in_play <- model_dat_not_in_play %>% 
+   select(-pitch_name, -type, -description, 
+          -stand,-game_year, -balls, -strikes, -inning, -runner_on, -scoring_position, -events) %>% 
+   scale() %>% as_tibble() %>% 
+   bind_cols(model_dat_not_in_play %>% 
+               select(stand,
+                      game_year, balls, strikes, inning, runner_on, scoring_position)) %>% 
+   as.data.table() %>% 
+   mltools::one_hot() %>% as_tibble() %>% bind_cols(model_dat_not_in_play %>% 
+                                                      select(description, pitch_name,
+                                                             events))
+ 
+ 
+ dat_kmeans_not_in_play <-  tibble(xmat = list(model_scaled_not_in_play %>% 
+                                                 select(-description, -pitch_name,
+                                                        -events))) %>%
+   crossing(nclust = 5)
+ 
+ dat_kmeans_not_in_play <-  dat_kmeans_not_in_play %>% 
+   mutate(kmean = map2(xmat, nclust, kmeans, nstart=20), # Fit K-means
+          within_ss = map(kmean, get_within_ss), # Get within-cluster SS
+          clusters = map2(xmat, kmean, get_cluster), # Get DFs with cluster affiliation
+          plots = map(clusters, plot_cluster)) # Plot clusters
+ 
+ 
+ kmeans_dat_not_in_play5 <- dat_kmeans_not_in_play %>% 
+   pluck("clusters", 1) %>% unnest() %>% select(cluster) %>% 
+   bind_cols(model_dat_not_in_play)
+ 
+ kmeans_dat_not_in_play5 %>% 
+   group_by(cluster) %>% 
+   summarise(mean_spin = mean(release_spin_rate),
+             mean_release_speed = mean(release_speed),
+             mean_effective_speed = mean(effective_speed),
+             mean_release_extension = mean(release_extension))
+ 
+ grid.arrange(grobs = dat_kmeans_not_in_play$plots) 
+ 
+ 
+ centers_not_in_play <- dat_kmeans_not_in_play %>% 
+   pluck("kmean", 1) %>% pluck("centers")
+ 
+ fourseam_not_in_play <- centers_not_in_play[4,]
+ twoseam_not_in_play <- centers_not_in_play[2,]
+ changeup_not_in_play <- centers_not_in_play[3,]
+ curveball_not_in_play <- centers_not_in_play[5,]
+ slider_not_in_play <- centers_not_in_play[1,]
+ 
+```
+
+The graphs alone on this clustering does not provide much insight on the differences in his pitches on balls hit in play vs ones that were not. The balls in play cluster is on the left and not in play is on the right.
+
+
+Performing the centroid subtraction did not yield any large enough differences to warrant any analysis. This suggests that deGrom seems to get unlucky when his pitches are hit in play, because his is not throwing his pitches any worse. I  did not include the centroid subtraction to save space on this report.
+
+
+### Strikeout vs Non-Strikeouts
+
+```{r, echo = FALSE, fig.show='hold', out.width="50%"}
+model_dat_strikeout <- model_dat_full %>% 
+ filter(str_detect(events, "strikeout")) 
+
+
+model_scaled_strikeout <- model_dat_strikeout %>% 
+ select(-pitch_name, -type, -description, 
+        -stand,-game_year, -balls, -strikes, -inning, -runner_on, -scoring_position, -events) %>% 
+ scale() %>% as_tibble() %>% 
+ bind_cols(model_dat_strikeout %>% 
+             select(stand,
+                    game_year, balls, strikes, inning, runner_on, scoring_position)) %>% 
+ as.data.table() %>% 
+ mltools::one_hot() %>% as_tibble() %>% bind_cols(model_dat_strikeout %>% 
+                                                    select(description, pitch_name,
+                                                           events))
+
+
+dat_kmeans_strikeout <-  tibble(xmat = list(model_scaled_strikeout %>% 
+                                               select(-description, -pitch_name,
+                                                      -events))) %>%
+ crossing(nclust = 5)
+
+dat_kmeans_strikeout <-  dat_kmeans_strikeout %>% 
+ mutate(kmean = map2(xmat, nclust, kmeans, nstart=20), # Fit K-means
+        within_ss = map(kmean, get_within_ss), # Get within-cluster SS
+        clusters = map2(xmat, kmean, get_cluster), # Get DFs with cluster affiliation
+        plots = map(clusters, plot_cluster)) # Plot clusters
+
+
+kmeans_dat_strikeout5 <- dat_kmeans_strikeout %>% 
+ pluck("clusters", 1) %>% unnest() %>% select(cluster) %>% 
+ bind_cols(model_dat_strikeout)
+
+kmeans_dat_strikeout5 %>% 
+ group_by(cluster) %>% 
+ summarise(mean_spin = mean(release_spin_rate),
+           mean_release_speed = mean(release_speed),
+           mean_effective_speed = mean(effective_speed),
+           mean_release_extension = mean(release_extension))
+
+grid.arrange(grobs = dat_kmeans_strikeout$plots)  
+
+centers_strikeout <- dat_kmeans_strikeout %>% 
+ pluck("kmean", 1) %>% pluck("centers")
+
+fourseam_strikeout <- centers_strikeout[1,]
+twoseam_strikeout <- centers_strikeout[2,]
+changeup_strikeout <- centers_strikeout[4,]
+curveball_strikeout <- centers_strikeout[3,]
+slider_strikeout <- centers_strikeout[5,]
+
+model_dat_not_strikeout <- model_dat_full %>% 
+   filter(!(str_detect(events, "strikeout"))) 
+ 
+ 
+model_scaled_not_strikeout <- model_dat_not_strikeout %>% 
+ select(-pitch_name, -type, -description, 
+        -stand,-game_year, -balls, -strikes, -inning, -runner_on, -scoring_position, -events) %>% 
+ scale() %>% as_tibble() %>% 
+ bind_cols(model_dat_not_strikeout %>% 
+             select(stand,
+                    game_year, balls, strikes, inning, runner_on, scoring_position)) %>% 
+ as.data.table() %>% 
+ mltools::one_hot() %>% as_tibble() %>% bind_cols(model_dat_not_strikeout %>% 
+                                                    select(description, pitch_name,
+                                                           events))
+
+
+dat_kmeans_not_strikeout <-  tibble(xmat = list(model_scaled_not_strikeout %>% 
+                                             select(-description, -pitch_name,
+                                                    -events))) %>%
+ crossing(nclust = 5)
+
+dat_kmeans_not_strikeout <-  dat_kmeans_not_strikeout %>% 
+ mutate(kmean = map2(xmat, nclust, kmeans, nstart=20, iter.max = 20), # Fit K-means
+        within_ss = map(kmean, get_within_ss), # Get within-cluster SS
+        clusters = map2(xmat, kmean, get_cluster), # Get DFs with cluster affiliation
+        plots = map(clusters, plot_cluster)) # Plot clusters
+
+
+kmeans_dat_not_strikeout5 <- dat_kmeans_not_strikeout %>% 
+ pluck("clusters", 1) %>% unnest() %>% select(cluster) %>% 
+ bind_cols(model_dat_not_strikeout)
+
+kmeans_dat_not_strikeout5 %>% 
+ group_by(cluster) %>% 
+ summarise(mean_spin = mean(release_spin_rate),
+           mean_release_speed = mean(release_speed),
+           mean_effective_speed = mean(effective_speed),
+           mean_release_extension = mean(release_extension))
+
+grid.arrange(grobs = dat_kmeans_not_strikeout$plots)  
+
+
+centers_not_strikeout <- dat_kmeans_not_strikeout %>% 
+ pluck("kmean", 1) %>% pluck("centers")
+
+fourseam_not_strikeout <- centers_not_strikeout[4,]
+twoseam_not_strikeout <- centers_not_strikeout[1,]
+changeup_not_strikeout <- centers_not_strikeout[5,]
+curveball_not_strikeout <- centers_not_strikeout[3,]
+slider_not_strikeout <- centers_not_strikeout[2,]
+
+```
+
+Again, it is tough to see any differences between the strikeout pitches clustering on the left against the non-strikeout pitches on the right.
+
+Similar to the clusters when we looked at balls in-play than not in-play. The strikeout vs non-strikeouts did not yield many differences either.
+
+
+### Clustering Results
+The fact that we only find large differences from 2017 to 2018 instead of depending on situations suggest that deGrom has done a good job of altering his mechanics to improve in 2018, but does not change what he is doing on the situation. This seems to support my first quarter project when I concluded he made a number of changes between before the 2018 season that allowed him to become an elite pitcher in the Major Leagues.

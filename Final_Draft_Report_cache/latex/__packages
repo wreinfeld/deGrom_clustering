@@ -1,0 +1,17 @@
+base
+mltools
+data.table
+knitr
+gridExtra
+ggdendro
+tidyverse
+ggplot2
+tibble
+tidyr
+readr
+purrr
+dplyr
+stringr
+forcats
+janitor
+lubridate
